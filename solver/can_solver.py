@@ -16,7 +16,7 @@ class CANSolver(BaseSolver):
                       bn_domain_map=bn_domain_map, resume=resume, **kwargs)
 
         if len(self.bn_domain_map) == 0:
-            self.bn_domain_map = {self.source_name: 0, self.target_name: 1}
+            self.bn_domain_map = {self.source_name: 0, self.target_name: 0}
 
         self.clustering_source_name = 'clustering_' + self.source_name
         self.clustering_target_name = 'clustering_' + self.target_name
@@ -150,8 +150,7 @@ class CANSolver(BaseSolver):
         target_samples = self.clustered_target_samples
 
         # filtering the samples
-        chosen_samples = solver_utils.filter_samples(
-		target_samples, threshold=threshold)
+        chosen_samples = solver_utils.filter_samples(target_samples, threshold=threshold)
 
         # filtering the classes
         filtered_classes = solver_utils.filter_class(
@@ -271,10 +270,10 @@ class CANSolver(BaseSolver):
 
             if self.opt.TRAIN.LOGGING and (update_iters+1) % \
                       (max(1, self.iters_per_loop // self.opt.TRAIN.NUM_LOGGING_PER_LOOP)) == 0:
-                accu = self.model_eval(source_preds, source_gt)
+                # accu = self.model_eval(source_preds, source_gt)
                 cur_loss = {'ce_loss': ce_loss_iter, 'cdd_loss': cdd_loss_iter,
 			'total_loss': loss}
-                self.logging(cur_loss, accu)
+                self.logging(cur_loss, 0)
 
             self.opt.TRAIN.TEST_INTERVAL = min(1.0, self.opt.TRAIN.TEST_INTERVAL)
             self.opt.TRAIN.SAVE_CKPT_INTERVAL = min(1.0, self.opt.TRAIN.SAVE_CKPT_INTERVAL)

@@ -31,6 +31,7 @@ class DANet(nn.Module):
                  fx_pretrained=True, fc_hidden_dims=[], frozen=[], 
                  num_domains_bn=2, dropout_ratio=(0.5,)):
         super(DANet, self).__init__()
+
         self.feature_extractor = utils.find_class_by_name(
                feature_extractor, backbones)(pretrained=fx_pretrained, 
                frozen=frozen, num_domains=num_domains_bn)

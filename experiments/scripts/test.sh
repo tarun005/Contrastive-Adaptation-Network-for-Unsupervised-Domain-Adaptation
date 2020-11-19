@@ -13,11 +13,11 @@ adapted=${3}
 exp_name=${4}
 
 out_dir=./experiments/ckpt/${exp_name}
-if [ -d ${out_dir} ]
-then
-  rm -rf ${out_dir}
-fi
-mkdir -p ${out_dir}
+# if [ -d ${out_dir} ]
+# then
+#   rm -rf ${out_dir}
+# fi
+# mkdir -p ${out_dir}
 
 if [ x${adapted} = x"True" ]
 then

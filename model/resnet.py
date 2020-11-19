@@ -154,6 +154,7 @@ class ResNet(nn.Module):
         self.out_dim = 512 * block.expansion
         #self.dropout = nn.Dropout(p=dropout_ratio)
         #self.fc = nn.Linear(512 * block.expansion, num_classes)
+        
         self.frozen = frozen
         self.ordered_module_names = ['conv1', 'bn1', 'relu', 'maxpool',
 		'layer1', 'layer2', 'layer3', 'layer4', 'avgpool']
@@ -213,7 +214,7 @@ class ResNet(nn.Module):
         for name in self.ordered_module_names:
             module = self._modules[name]
             x = module(x)
-            x = x.detach() if name in self.frozen else x
+            # x = x.detach() if name in self.frozen else x
 
         return x
 
