@@ -12,6 +12,9 @@ import pprint
 from config.config import cfg, cfg_from_file, cfg_from_list
 from math import ceil as ceil
 
+import warnings
+warnings.filterwarnings("ignore")
+
 def parse_args():
     """
     Parse input arguments

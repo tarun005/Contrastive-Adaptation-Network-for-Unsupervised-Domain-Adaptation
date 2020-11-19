@@ -9,6 +9,9 @@ from prepare_data import *
 import sys
 import pprint
 
+import warnings
+warnings.filterwarnings("ignore")
+
 def parse_args():
     """
     Parse input arguments

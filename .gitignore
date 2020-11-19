@@ -1,4 +1,7 @@
 *pyc
+amazon/
+dslr/
+webcam/
 *.jpg
 *.png
 *pth

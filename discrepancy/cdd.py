@@ -199,7 +199,7 @@ class CDD(object):
         inter = None
         if not self.intra_only:
             inter_mask = to_cuda((torch.ones([num_classes, num_classes]) \
-                    - torch.eye(num_classes)).type(torch.ByteTensor))
+                    - torch.eye(num_classes)).type(torch.bool))
             inter_mmds = torch.masked_select(mmds, inter_mask)
             inter = torch.sum(inter_mmds) / (self.num_classes * (self.num_classes - 1))
 
