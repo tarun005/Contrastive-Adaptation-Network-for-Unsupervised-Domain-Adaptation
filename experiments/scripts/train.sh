@@ -13,11 +13,14 @@ method=${3}
 exp_name=${4}
 
 out_dir=./experiments/ckpt/${exp_name}
-if [ -d ${out_dir} ]
-then
-  rm -rf ${out_dir}
-fi
+# if [ -d ${out_dir} ]
+# then
+#   rm -rf ${out_dir}
+# fi
 mkdir -p ${out_dir}
 
+for i in {1..3}
+do
 CUDA_VISIBLE_DEVICES=${gpus} python ./tools/train.py --cfg ${cfg} \
-           --method ${3} --exp_name ${4} 2>&1 | tee ${out_dir}/log.txt
+           --method ${3} --exp_name ${4}_${ii} 2>&1 | tee ${out_dir}/log_${ii}.txt
+done
