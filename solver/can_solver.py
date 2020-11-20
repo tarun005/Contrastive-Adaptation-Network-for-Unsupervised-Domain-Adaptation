@@ -222,10 +222,14 @@ class CANSolver(BaseSolver):
         source_samples = samples['Img_source']
         source_sample_paths = samples['Path_source']
         source_nums = [len(paths) for paths in source_sample_paths]
+        print('samples={}'.format(samples))
+        print('source_samples shape={}'.format(source_samples.shape))
+
 
         target_samples = samples['Img_target']
         target_sample_paths = samples['Path_target']
         target_nums = [len(paths) for paths in target_sample_paths]
+        print('target_samples shape={}'.format(target_samples.shape))
 
         source_sample_labels = samples['Label_source']
         self.selected_classes = [labels[0].item() for labels in source_sample_labels]
@@ -406,9 +410,11 @@ class CANSolver(BaseSolver):
                 self.net.module.set_bn_domain(self.bn_domain_map[self.source_name])
                 feats_source = self.net(source_cls_concat)
                 self.net.module.set_bn_domain(self.bn_domain_map[self.target_name])
+                print('source in shape'.format(source_cls_concat.shape))
                 feats_target = self.net(target_cls_concat)
                 print('type feats_source = {}, type feats_target'.format(type(feats_source), type(feats_target)))
                 # prepare the features
+                print('shape in target'.format(target_cls_concat.shape))
                 feats_toalign_S = self.prepare_feats(feats_source)
                 feats_toalign_T = self.prepare_feats(feats_target)
 
