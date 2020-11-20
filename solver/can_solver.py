@@ -232,7 +232,8 @@ class CANSolver(BaseSolver):
         src_labels = self.selected_classes
         tgt_labels_pred = [labels[0].item() for labels in samples['Label_target']]
         assert (self.selected_classes == tgt_labels_pred)
-
+        src_labels = torch.tensor(src_labels).cuda()
+        tgt_labels_pred = torch.tensor(tgt_labels_pred).cuda()
         return source_samples, source_nums, target_samples, target_nums, src_labels, tgt_labels_pred
 
     def prepare_feats(self, feats):
@@ -347,6 +348,7 @@ class CANSolver(BaseSolver):
 
     def ILA_update_network(self, filtered_classes):
         # initial configuration
+        print("ILA update network at loop {}".format(self.loop))
         stop = False
         update_iters = 0
 
@@ -408,6 +410,7 @@ class CANSolver(BaseSolver):
                 if self.loop >=20:
                     for fs, ft in zip(feats_toalign_S, feats_toalign_T):
                         sim_matrix = self.sim_module.get_sim_matrix(fs, ft)
+                        sim_matrix = sim_matrix.cuda()
                         sim_loss = self.sim_module.calc_loss_rect_matrix(sim_matrix, src_labels, tgt_labels_pred)
                         loss += 2.0*sim_loss
 
