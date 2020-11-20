@@ -9,6 +9,7 @@ from discrepancy.cdd import CDD
 from math import ceil as ceil
 from .base_solver import BaseSolver
 from copy import deepcopy
+from . import criterion_factory as cf
 
 class CANSolver(BaseSolver):
     def __init__(self, net, dataloader, bn_domain_map={}, resume=None, **kwargs):
@@ -34,6 +35,17 @@ class CANSolver(BaseSolver):
                                         self.opt.CLUSTERING.BUDGET)
 
         self.clustered_target_samples = {}
+        sim_config = {
+        'similarity_func' : 'euclidean',
+        'top_n_sim': 5,
+        'ss_loss': False,
+        'ranking_k': 4,
+        'top_ranked_n': 80,
+        'knn_method': 'ranking'
+        }
+        self.sim_module = cf.KnnSfmxConstLoss(sim_config)
+        self.sim_module = self.sim_module.cuda()
+
 
     def complete_training(self):
         if self.loop >= self.opt.TRAIN.MAX_LOOP:
@@ -120,7 +132,7 @@ class CANSolver(BaseSolver):
                 self.compute_iters_per_loop(filtered_classes)
 
             # k-step update of network parameters through forward-backward process
-            self.update_network(filtered_classes)
+            self.ILA_update_network(filtered_classes)
             self.loop += 1
 
         print('Training Done!')
@@ -188,7 +200,26 @@ class CANSolver(BaseSolver):
         assert(self.selected_classes == 
                [labels[0].item() for labels in  samples['Label_target']])
         return source_samples, source_nums, target_samples, target_nums
-            
+
+    def ILA_CAS(self):
+        samples = self.get_samples('categorical')
+
+        source_samples = samples['Img_source']
+        source_sample_paths = samples['Path_source']
+        source_nums = [len(paths) for paths in source_sample_paths]
+
+        target_samples = samples['Img_target']
+        target_sample_paths = samples['Path_target']
+        target_nums = [len(paths) for paths in target_sample_paths]
+
+        source_sample_labels = samples['Label_source']
+        self.selected_classes = [labels[0].item() for labels in source_sample_labels]
+        src_labels = self.selected_classes
+        tgt_labels_pred = [labels[0].item() for labels in samples['Label_target']]
+        assert (self.selected_classes == tgt_labels_pred)
+
+        return source_samples, source_nums, target_samples, target_nums, src_labels, tgt_labels_pred
+
     def prepare_feats(self, feats):
         return [feats[key] for key in feats if key in self.opt.CDD.ALIGNMENT_FEAT_KEYS]
 
@@ -298,4 +329,113 @@ class CANSolver(BaseSolver):
                 stop = True
             else:
                 stop = False
+
+    def ILA_update_network(self, filtered_classes):
+        # initial configuration
+        stop = False
+        update_iters = 0
+
+        self.train_data[self.source_name]['iterator'] = \
+            iter(self.train_data[self.source_name]['loader'])
+        self.train_data['categorical']['iterator'] = \
+            iter(self.train_data['categorical']['loader'])
+
+        while not stop:
+            # update learning rate
+            self.update_lr()
+
+            # set the status of network
+            self.net.train()
+            self.net.zero_grad()
+
+            loss = 0
+            ce_loss_iter = 0
+            cdd_loss_iter = 0
+
+            # coventional sampling for training on labeled source data
+            source_sample = self.get_samples(self.source_name)
+            source_data, source_gt = source_sample['Img'], \
+                                     source_sample['Label']
+
+            source_data = to_cuda(source_data)
+            source_gt = to_cuda(source_gt)
+            self.net.module.set_bn_domain(self.bn_domain_map[self.source_name])
+            source_preds = self.net(source_data)['logits']
+
+            # compute the cross-entropy loss
+            ce_loss = self.CELoss(source_preds, source_gt)
+            ce_loss.backward()
+
+            ce_loss_iter += ce_loss
+            loss += ce_loss
+
+            if len(filtered_classes) > 0:
+                # update the network parameters
+                # 1) class-aware sampling
+                source_samples_cls, source_nums_cls, \
+                target_samples_cls, target_nums_cls, src_labels, tgt_labels_pred = self.ILA_CAS()
+
+                # 2) forward and compute the loss
+                source_cls_concat = torch.cat([to_cuda(samples)
+                                               for samples in source_samples_cls], dim=0)
+                target_cls_concat = torch.cat([to_cuda(samples)
+                                               for samples in target_samples_cls], dim=0)
+
+                self.net.module.set_bn_domain(self.bn_domain_map[self.source_name])
+                feats_source = self.net(source_cls_concat)
+                self.net.module.set_bn_domain(self.bn_domain_map[self.target_name])
+                feats_target = self.net(target_cls_concat)
+
+                # prepare the features
+                feats_toalign_S = self.prepare_feats(feats_source)
+                feats_toalign_T = self.prepare_feats(feats_target)
+
+                for fs, ft in zip(feats_toalign_S, feats_toalign_T):
+                    sim_matrix = self.sim_module.get_sim_matrix(fs, ft)
+                    sim_loss = self.sim_module.calc_loss_rect_matrix(sim_matrix, src_labels, tgt_labels_pred)
+                    loss += 2.0*sim_loss
+
+                cdd_loss = self.cdd.forward(feats_toalign_S, feats_toalign_T,
+                                            source_nums_cls, target_nums_cls)[self.discrepancy_key]
+
+                cdd_loss *= self.opt.CDD.LOSS_WEIGHT
+                cdd_loss.backward()
+
+                cdd_loss_iter += cdd_loss
+                loss += cdd_loss
+
+            # update the network
+            self.optimizer.step()
+
+            if self.opt.TRAIN.LOGGING and (update_iters + 1) % \
+                    (max(1, self.iters_per_loop // self.opt.TRAIN.NUM_LOGGING_PER_LOOP)) == 0:
+                # accu = self.model_eval(source_preds, source_gt)
+                cur_loss = {'ce_loss'   : ce_loss_iter, 'cdd_loss': cdd_loss_iter,
+                            'total_loss': loss}
+                self.logging(cur_loss, 0)
+
+            self.opt.TRAIN.TEST_INTERVAL = min(1.0, self.opt.TRAIN.TEST_INTERVAL)
+            self.opt.TRAIN.SAVE_CKPT_INTERVAL = min(1.0, self.opt.TRAIN.SAVE_CKPT_INTERVAL)
+
+            if self.opt.TRAIN.TEST_INTERVAL > 0 and \
+                    (update_iters + 1) % int(self.opt.TRAIN.TEST_INTERVAL * self.iters_per_loop) == 0:
+                with torch.no_grad():
+                    self.net.module.set_bn_domain(self.bn_domain_map[self.target_name])
+                    accu = self.test()
+                    print('Test at (loop %d, iters: %d) with %s: %.4f.' % (self.loop,
+                                                                           self.iters, self.opt.EVAL_METRIC, accu))
+
+            if self.opt.TRAIN.SAVE_CKPT_INTERVAL > 0 and \
+                    (update_iters + 1) % int(self.opt.TRAIN.SAVE_CKPT_INTERVAL * self.iters_per_loop) == 0:
+                self.save_ckpt()
+
+            update_iters += 1
+            self.iters += 1
+
+            # update stop condition
+            if update_iters >= self.iters_per_loop:
+                stop = True
+            else:
+                stop = False
+
 
