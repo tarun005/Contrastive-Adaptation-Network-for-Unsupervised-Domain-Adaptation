@@ -8,6 +8,7 @@ from config.config import cfg, cfg_from_file, cfg_from_list
 from prepare_data import *
 import sys
 import pprint
+import criterion_factory as cf
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -45,6 +46,7 @@ def parse_args():
     return args
 
 def train(args):
+    
     bn_domain_map = {}
 
     # method-specific setting 
@@ -97,6 +99,7 @@ def train(args):
                  num_domains_bn=num_domains_bn)
 
     net = torch.nn.DataParallel(net)
+
     if torch.cuda.is_available():
        net.cuda()
 
@@ -108,6 +111,7 @@ def train(args):
     print('Finished!')
 
 if __name__ == '__main__':
+    os.chdir("/vulcan-pvc1/Contrastive-Adaptation-Network-for-Unsupervised-Domain-Adaptation")
     cudnn.benchmark = True 
     args = parse_args()
 

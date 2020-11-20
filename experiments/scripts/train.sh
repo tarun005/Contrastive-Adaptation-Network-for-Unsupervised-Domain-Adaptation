@@ -1,5 +1,5 @@
 #!/bin/bash
-
+cd /vulcan-pvc1/Contrastive-Adaptation-Network-for-Unsupervised-Domain-Adaptation
 export PYTHONPATH="`pwd`:${PYTHONPATH}"
 if [ $# != 4 ]
 then 
@@ -19,8 +19,6 @@ out_dir=./experiments/ckpt/${exp_name}
 # fi
 mkdir -p ${out_dir}
 
-for i in {1..3}
-do
-CUDA_VISIBLE_DEVICES=${gpus} python ./tools/train.py --cfg ${cfg} \
-           --method ${3} --exp_name ${4}_${ii} 2>&1 | tee ${out_dir}/log_${ii}.txt
-done
+CUDA_VISIBLE_DEVICES=${gpus} python3 ./tools/train.py --cfg ${cfg} \
+           --method ${3} --exp_name ${4} 2>&1 | tee ${out_dir}/log.txt
+

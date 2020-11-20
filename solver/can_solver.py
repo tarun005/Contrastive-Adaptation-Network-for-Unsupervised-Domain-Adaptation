@@ -11,6 +11,7 @@ from .base_solver import BaseSolver
 from copy import deepcopy
 from . import criterion_factory as cf
 
+
 class CANSolver(BaseSolver):
     def __init__(self, net, dataloader, bn_domain_map={}, resume=None, **kwargs):
         super(CANSolver, self).__init__(net, dataloader, \
@@ -84,6 +85,20 @@ class CANSolver(BaseSolver):
                 eval2 < self.opt.TRAIN.STOP_THRESHOLDS[1] and \
                 eval3 < self.opt.TRAIN.STOP_THRESHOLDS[2])
 
+#     def ILA_solve(self):
+#         stop = False
+#         if self.resume:
+#             self.iters += 1
+#             self.loop += 1
+
+#         while True: 
+#             # updating the target label hypothesis through clustering
+#             target_hypt = {}
+#             filtered_classes = []
+#             with torch.no_grad():
+#                 take model 
+        
+        
     def solve(self):
         stop = False
         if self.resume:
