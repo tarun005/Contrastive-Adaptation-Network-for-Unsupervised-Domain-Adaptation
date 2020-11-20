@@ -234,6 +234,8 @@ class CANSolver(BaseSolver):
         assert (self.selected_classes == tgt_labels_pred)
         src_labels = torch.tensor(src_labels).cuda()
         tgt_labels_pred = torch.tensor(tgt_labels_pred).cuda()
+        print('samples[Label_source]={}, samples[Label_target]={}, src_labels={}, tgt_labels_pred={}'.format(\
+                samples['Label_source'], samples['Label_target'], src_labels, tgt_labels_pred))
         return source_samples, source_nums, target_samples, target_nums, src_labels, tgt_labels_pred
 
     def prepare_feats(self, feats):
@@ -398,11 +400,14 @@ class CANSolver(BaseSolver):
                 target_cls_concat = torch.cat([to_cuda(samples)
                                                for samples in target_samples_cls], dim=0)
 
+                print('type source_samples_cls={}, type target_samples_cls={}'.format(type(source_samples_cls), \
+                                                                                      type(target_samples_cls)))
+                print("source_cls_concat={}, target_cls_concat={}".format(source_cls_concat, target_cls_concat))
                 self.net.module.set_bn_domain(self.bn_domain_map[self.source_name])
                 feats_source = self.net(source_cls_concat)
                 self.net.module.set_bn_domain(self.bn_domain_map[self.target_name])
                 feats_target = self.net(target_cls_concat)
-
+                print('type feats_source = {}, type feats_target'.format(type(feats_source), type(feats_target)))
                 # prepare the features
                 feats_toalign_S = self.prepare_feats(feats_source)
                 feats_toalign_T = self.prepare_feats(feats_target)
