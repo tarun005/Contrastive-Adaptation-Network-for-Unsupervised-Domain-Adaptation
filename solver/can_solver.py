@@ -405,10 +405,11 @@ class CANSolver(BaseSolver):
                 feats_toalign_S = self.prepare_feats(feats_source)
                 feats_toalign_T = self.prepare_feats(feats_target)
 
-                for fs, ft in zip(feats_toalign_S, feats_toalign_T):
-                    sim_matrix = self.sim_module.get_sim_matrix(fs, ft)
-                    sim_loss = self.sim_module.calc_loss_rect_matrix(sim_matrix, src_labels, tgt_labels_pred)
-                    loss += 2.0*sim_loss
+                if self.loop >=20:
+                    for fs, ft in zip(feats_toalign_S, feats_toalign_T):
+                        sim_matrix = self.sim_module.get_sim_matrix(fs, ft)
+                        sim_loss = self.sim_module.calc_loss_rect_matrix(sim_matrix, src_labels, tgt_labels_pred)
+                        loss += 2.0*sim_loss
 
                 cdd_loss = self.cdd.forward(feats_toalign_S, feats_toalign_T,
                                             source_nums_cls, target_nums_cls)[self.discrepancy_key]
