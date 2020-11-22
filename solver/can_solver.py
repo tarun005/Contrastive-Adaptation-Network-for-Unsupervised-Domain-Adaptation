@@ -37,11 +37,11 @@ class CANSolver(BaseSolver):
 
         self.clustered_target_samples = {}
         sim_config = {
-        'similarity_func' : 'euclidean',
+        'similarity_func' : 'cosine',
         'top_n_sim': 5,
         'ss_loss': False,
-        'ranking_k': 4,
-        'top_ranked_n': 80,
+        'ranking_k': 3,
+        'top_ranked_n': 10,
         'knn_method': 'ranking'
         }
         self.sim_module = cf.KnnSfmxConstLoss(sim_config)
@@ -152,6 +152,7 @@ class CANSolver(BaseSolver):
 
         print('Training Done!')
         
+    
     def update_labels(self):
         net = self.net
         net.eval()
@@ -185,7 +186,17 @@ class CANSolver(BaseSolver):
 
         print('The number of filtered classes: %d.' % len(filtered_classes))
         return chosen_samples, filtered_classes
-
+    
+#     def ILA_labelling_and_filtering(self):
+# #         take network, do KNN labelling and filtering
+#         labels_tgt = cf.sort_div(out_src, out_tgt, src_labels)
+#         filtered_labels_tgts = cf.filtering(sim_matrix, src_labels, labels_tgt)
+#         filtered_samples['data'] = filtered_data #tgt features
+#         filtered_samples['label'] = filtered_label #predicted label
+#         filtered_samples['gt'] = filtered_gt #ground truth
+#         self.filter_class
+        
+    
     def construct_categorical_dataloader(self, samples, filtered_classes):
         # update self.dataloader
         target_classwise = solver_utils.split_samples_classwise(
@@ -222,24 +233,27 @@ class CANSolver(BaseSolver):
         source_samples = samples['Img_source']
         source_sample_paths = samples['Path_source']
         source_nums = [len(paths) for paths in source_sample_paths]
-        print('samples={}'.format(samples))
-        print('source_samples shape={}'.format(source_samples.shape))
+#         print('samples={}'.format(samples))
+#         print('source_samples shape={}'.format(source_samples.shape))
 
 
         target_samples = samples['Img_target']
         target_sample_paths = samples['Path_target']
         target_nums = [len(paths) for paths in target_sample_paths]
-        print('target_samples shape={}'.format(target_samples.shape))
+#         print('target_samples shape={}'.format(target_samples.shape))
 
         source_sample_labels = samples['Label_source']
         self.selected_classes = [labels[0].item() for labels in source_sample_labels]
-        src_labels = self.selected_classes
-        tgt_labels_pred = [labels[0].item() for labels in samples['Label_target']]
-        assert (self.selected_classes == tgt_labels_pred)
-        src_labels = torch.tensor(src_labels).cuda()
-        tgt_labels_pred = torch.tensor(tgt_labels_pred).cuda()
-        print('samples[Label_source]={}, samples[Label_target]={}, src_labels={}, tgt_labels_pred={}'.format(\
-                samples['Label_source'], samples['Label_target'], src_labels, tgt_labels_pred))
+
+        src_labels = torch.cat(source_sample_labels, dim=0)
+        src_labels = src_labels.cuda()
+        
+        tgt_labels_pred = torch.cat(samples['Label_target'], dim=0)
+        tgt_labels_pred = tgt_labels_pred.cuda()
+        assert (self.selected_classes == [labels[0].item() for labels in samples['Label_target']])
+        
+#         print('samples[Label_source]={}, samples[Label_target]={}, src_labels={}, tgt_labels_pred={}'.format(\
+#                 samples['Label_source'], samples['Label_target'], src_labels, tgt_labels_pred))
         return source_samples, source_nums, target_samples, target_nums, src_labels, tgt_labels_pred
 
     def prepare_feats(self, feats):
@@ -362,7 +376,11 @@ class CANSolver(BaseSolver):
             iter(self.train_data[self.source_name]['loader'])
         self.train_data['categorical']['iterator'] = \
             iter(self.train_data['categorical']['loader'])
-
+        all_total = 0.0
+        all_correct = 0.0
+        filtered_total = 0.0
+        filtered_correct = 0.0
+    
         while not stop:
             # update learning rate
             self.update_lr()
@@ -404,26 +422,48 @@ class CANSolver(BaseSolver):
                 target_cls_concat = torch.cat([to_cuda(samples)
                                                for samples in target_samples_cls], dim=0)
 
-                print('type source_samples_cls={}, type target_samples_cls={}'.format(type(source_samples_cls), \
-                                                                                      type(target_samples_cls)))
-                print("source_cls_concat={}, target_cls_concat={}".format(source_cls_concat, target_cls_concat))
+#                 print('type source_samples_cls={}, type target_samples_cls={}'.format(type(source_samples_cls), \
+#                                                                                       type(target_samples_cls)))
+#                 print("source_cls_concat={}, target_cls_concat={}".format(source_cls_concat, target_cls_concat))
                 self.net.module.set_bn_domain(self.bn_domain_map[self.source_name])
                 feats_source = self.net(source_cls_concat)
                 self.net.module.set_bn_domain(self.bn_domain_map[self.target_name])
-                print('source in shape'.format(source_cls_concat.shape))
+#                 print('source in shape'.format(source_cls_concat.shape))
                 feats_target = self.net(target_cls_concat)
-                print('type feats_source = {}, type feats_target'.format(type(feats_source), type(feats_target)))
+#                 print('type feats_source = {}, type feats_target'.format(type(feats_source), type(feats_target)))
                 # prepare the features
-                print('shape in target'.format(target_cls_concat.shape))
+#                 print('shape in target'.format(target_cls_concat.shape))
                 feats_toalign_S = self.prepare_feats(feats_source)
                 feats_toalign_T = self.prepare_feats(feats_target)
 
-                if self.loop >=20:
-                    for fs, ft in zip(feats_toalign_S, feats_toalign_T):
-                        sim_matrix = self.sim_module.get_sim_matrix(fs, ft)
-                        sim_matrix = sim_matrix.cuda()
-                        sim_loss = self.sim_module.calc_loss_rect_matrix(sim_matrix, src_labels, tgt_labels_pred)
-                        loss += 2.0*sim_loss
+                if self.loop >= self.opt.TRAIN.LOOPS_BEFORE_ILA:
+                    fs, ft = feats_toalign_S[0], feats_toalign_T[0]
+#                     for fs, ft in zip(feats_toalign_S, feats_toalign_T):
+#                         print("fs shape={}, ft shape={}".format(fs.shape, ft.shape))
+                    assert fs.shape[0] == ft.shape[0]
+#                         assert fs.shape[0] == 30, 'num of features source={}'.format(fs.shape[0])
+#                         assert src_labels.shape[0] == 30, 'num of labels source={}'.format(src_labels.shape[0])
+                    f_st = torch.cat((fs, ft), dim=0)
+                    print('f_st shape={}'.format(f_st.shape))
+                    sim_loss = 2.0* (self.sim_module(f_st, criterion_inputs= {'src_labels': src_labels}))
+#                         sim_matrix = self.sim_module.get_sim_matrix(fs, ft)
+#                         sim_matrix = sim_matrix.cuda()
+#                         sim_loss = self.sim_module.calc_loss_rect_matrix(sim_matrix, src_labels, tgt_labels_pred)
+                    conf_ind = self.sim_module.conf_ind
+                    all_assigned = self.sim_module.all_assigned
+                    all_total += all_assigned.shape[0]
+                    all_correct += torch.sum((all_assigned == tgt_labels_pred).float()).item()
+                    fil_labels = tgt_labels_pred[conf_ind] 
+                    fil_assigned = all_assigned[conf_ind]
+                    filtered_correct += torch.sum((fil_labels == fil_assigned).float()).item()
+                    filtered_total += conf_ind.shape[0]
+                    del all_assigned, fil_labels, fil_assigned
+#                     print('fil corr: {}, fil total: {}, all_correct:{}, all_total: {}'.format(filtered_correct, filtered_total, all_correct, all_total ) )
+#                     print('conf_ind = {}, all_assigned = {}'.format(conf_ind, all_assigned))
+
+                    assert (torch.isnan(sim_loss) == False)
+                    sim_loss.backward(retain_graph=True)
+                    
 
                 cdd_loss = self.cdd.forward(feats_toalign_S, feats_toalign_T,
                                             source_nums_cls, target_nums_cls)[self.discrepancy_key]
@@ -436,6 +476,9 @@ class CANSolver(BaseSolver):
 
             # update the network
             self.optimizer.step()
+            del cdd_loss
+            if self.loop >= self.opt.TRAIN.LOOPS_BEFORE_ILA:
+                del sim_loss
 
             if self.opt.TRAIN.LOGGING and (update_iters + 1) % \
                     (max(1, self.iters_per_loop // self.opt.TRAIN.NUM_LOGGING_PER_LOOP)) == 0:
@@ -454,10 +497,16 @@ class CANSolver(BaseSolver):
                     accu = self.test()
                     print('Test at (loop %d, iters: %d) with %s: %.4f.' % (self.loop,
                                                                            self.iters, self.opt.EVAL_METRIC, accu))
+                    if self.loop >= self.opt.TRAIN.LOOPS_BEFORE_ILA:
+                        print("loop: {:05d}, all_precision: {:.5f}, filtered_precision: {:.5f},".format(self.loop, 100.0*all_correct/all_total, 100.0*filtered_correct/filtered_total ))
+                        all_total = 0.0
+                        all_correct = 0.0
+                        filtered_total = 0.0
+                        filtered_correct = 0.0
 
-            if self.opt.TRAIN.SAVE_CKPT_INTERVAL > 0 and \
-                    (update_iters + 1) % int(self.opt.TRAIN.SAVE_CKPT_INTERVAL * self.iters_per_loop) == 0:
-                self.save_ckpt()
+#             if self.opt.TRAIN.SAVE_CKPT_INTERVAL > 0 and \
+#                     (update_iters + 1) % int(self.opt.TRAIN.SAVE_CKPT_INTERVAL * self.iters_per_loop) == 0:
+#                 self.save_ckpt()
 
             update_iters += 1
             self.iters += 1

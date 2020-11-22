@@ -4,9 +4,12 @@ import numpy as np
 import torch.nn as nn
 
 def filter_samples(samples, threshold=0.05):
+#     threshold = 0.05
     batch_size_full = len(samples['data'])
     min_dist = torch.min(samples['dist2center'], dim=1)[0]
     mask = min_dist < threshold
+    print('threshold={}'.format(threshold))
+    print('mask={}'.format(mask))
 
     filtered_data = [samples['data'][m] 
 		for m in range(mask.size(0)) if mask[m].item() == 1]

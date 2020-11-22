@@ -214,7 +214,7 @@ class ResNet(nn.Module):
         for name in self.ordered_module_names:
             module = self._modules[name]
             x = module(x)
-            # x = x.detach() if name in self.frozen else x
+#             x = x.detach() if name in self.frozen else x
 
         return x
 

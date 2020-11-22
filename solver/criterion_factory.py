@@ -50,7 +50,7 @@ class KnnSfmxConstLoss(nn.Module):
             out_src = F.normalize(out_src, dim=1, p=2)
             out_tar = F.normalize(out_tar, dim=1, p=2)
             matrix = torch.matmul(out_src, out_tar.T)
-            matrix = matrix + 1.0
+            matrix = 0.5*(matrix + 1.0)
             assert torch.min(matrix).item() >= 0.0, 'similarity matrix has negative values, cosine'
             # print('matrix {}'.format(matrix))
             # source X target matrix as in overleaf figure
@@ -129,10 +129,13 @@ class KnnSfmxConstLoss(nn.Module):
     
     def forward_ranking(self, output, size_average=True, margin_update=0.,
                 criterion_inputs=None, shift=0):
+#         out_src, out_tar = output
+#         ns = 
         n = output.shape[0] / 2  # n number of samples from source and n from target (batch_size = 2*n)
         n = int(n)
         self.n_per_domain = n
         out_src, out_tar = torch.split(output, int(n), dim=0)
+#         assert n==30
 
         sim_matrix = self.get_sim_matrix(out_src, out_tar)
         src_labels = criterion_inputs['src_labels']
@@ -170,6 +173,7 @@ class KnnSfmxConstLoss(nn.Module):
             ranking_score_list.append(pred_conf_score)
         
         sort_ranking_score, ind_tgt = torch.sort(torch.tensor(ranking_score_list), descending=True)
+        print('sort_ranking_score={}, ind_tgt={}'.format(sort_ranking_score, ind_tgt))
         top_n_tgt_ind = torch.narrow(ind_tgt, 0, 0+shift, self.top_ranked_n)
         
         confident_sim_matrix_list = []
@@ -186,8 +190,11 @@ class KnnSfmxConstLoss(nn.Module):
         
         #calculate loss
     def calc_loss_rect_matrix(self, confident_sim_matrix, src_labels, confident_tgt_labels):
+        
         n_src = src_labels.shape[0]
         n_tgt = confident_tgt_labels.shape[0]
+        
+        print("n_src={}, n_tgt={}".format(n_src, n_tgt))
         
         vr_src = src_labels.unsqueeze(-1).repeat(1, n_tgt)
         hr_tgt = confident_tgt_labels.unsqueeze(-2).repeat(n_src, 1)
@@ -211,7 +218,7 @@ class KnnSfmxConstLoss(nn.Module):
             ghost_sim, ghost_dis, mask_sim = ghost_sim.cuda(), ghost_dis.cuda(), mask_sim.cuda()
         
         final_mask = (ghost_sim.bool() & ghost_dis.bool()) #& mask_sim.bool()
-        
+#         print("final_mask={}".format(final_mask))
         if torch.cuda.is_available():
             confident_sim_matrix, final_mask = confident_sim_matrix.cuda(), final_mask.cuda()
         

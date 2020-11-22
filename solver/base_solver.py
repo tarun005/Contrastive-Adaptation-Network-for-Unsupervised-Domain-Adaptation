@@ -118,20 +118,21 @@ class BaseSolver:
         return res
 
     def save_ckpt(self):
-        save_path = self.opt.SAVE_DIR
-        ckpt_resume = os.path.join(save_path, 'ckpt_%d_%d.resume' % (self.loop, self.iters))
-        ckpt_weights = os.path.join(save_path, 'ckpt_%d_%d.weights' % (self.loop, self.iters))
-        torch.save({'loop': self.loop,
-                    'iters': self.iters,
-                    'model_state_dict': self.net.module.state_dict(),
-                    'optimizer_state_dict': self.optimizer.state_dict(),
-                    'history': self.history,
-                    'bn_domain_map': self.bn_domain_map
-                    }, ckpt_resume)
+        return
+#         save_path = self.opt.SAVE_DIR
+#         ckpt_resume = os.path.join(save_path, 'ckpt_%d_%d.resume' % (self.loop, self.iters))
+#         ckpt_weights = os.path.join(save_path, 'ckpt_%d_%d.weights' % (self.loop, self.iters))
+#         torch.save({'loop': self.loop,
+#                     'iters': self.iters,
+#                     'model_state_dict': self.net.module.state_dict(),
+#                     'optimizer_state_dict': self.optimizer.state_dict(),
+#                     'history': self.history,
+#                     'bn_domain_map': self.bn_domain_map
+#                     }, ckpt_resume)
 
-        torch.save({'weights': self.net.module.state_dict(),
-                    'bn_domain_map': self.bn_domain_map
-                    }, ckpt_weights)
+#         torch.save({'weights': self.net.module.state_dict(),
+#                     'bn_domain_map': self.bn_domain_map
+#                     }, ckpt_weights)
 
     def complete_training(self):
         if self.loop > self.opt.TRAIN.MAX_LOOP:
