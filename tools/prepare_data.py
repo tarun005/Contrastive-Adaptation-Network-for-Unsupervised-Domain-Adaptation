@@ -48,6 +48,15 @@ def prepare_data_CAN():
                 train=True, num_workers=cfg.NUM_WORKERS, 
                 classnames=classes)
 
+    batch_size = cfg.TRAIN.SOURCE_BATCH_SIZE
+    dataset_type = 'SingleDataset'
+    print('Building %s dataloader...' % target)
+    dataloaders[target] = CustomDatasetDataLoader(
+                dataset_root=dataroot_T, dataset_type=dataset_type,
+                batch_size=batch_size, transform=train_transform,
+                train=True, num_workers=cfg.NUM_WORKERS,
+                classnames=classes)
+
     # initialize the categorical dataloader
     dataset_type = 'CategoricalSTDataset'
     source_batch_size = cfg.TRAIN.SOURCE_CLASS_BATCH_SIZE

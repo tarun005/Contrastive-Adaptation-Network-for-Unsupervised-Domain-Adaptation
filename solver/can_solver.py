@@ -36,7 +36,7 @@ class CANSolver(BaseSolver):
         self.clustering = clustering.Clustering(self.opt.CLUSTERING.EPS, 
                                         self.opt.CLUSTERING.FEAT_KEY, 
                                         self.opt.CLUSTERING.BUDGET)
-
+        self.method = 'CDAN'
         self.clustered_target_samples = {}
         sim_config = {
         'similarity_func' : 'cosine',
