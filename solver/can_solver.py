@@ -10,6 +10,8 @@ from math import ceil as ceil
 from .base_solver import BaseSolver
 from copy import deepcopy
 from . import criterion_factory as cf
+from model import network
+from model import lr_schedule
 
 
 class CANSolver(BaseSolver):
@@ -46,6 +48,8 @@ class CANSolver(BaseSolver):
         }
         self.sim_module = cf.KnnSfmxConstLoss(sim_config)
         self.sim_module = self.sim_module.cuda()
+        self.ILA_adver_create_network()
+
 
 
     def complete_training(self):
@@ -147,7 +151,8 @@ class CANSolver(BaseSolver):
                 self.compute_iters_per_loop(filtered_classes)
 
             # k-step update of network parameters through forward-backward process
-            self.ILA_update_network(filtered_classes)
+            # self.ILA_update_network(filtered_classes)
+            self.ILA_adver_update_network(filtered_classes)
             self.loop += 1
 
         print('Training Done!')
@@ -517,4 +522,262 @@ class CANSolver(BaseSolver):
             else:
                 stop = False
 
+    # def stage(self):
+    #     if config["loss"]["random"]:
+    #         random_layer = network.RandomLayer([base_network.output_num(), class_num], config["loss"]["random_dim"])
+    #         ad_net = network.AdversarialNetwork(config["loss"]["random_dim"], 1024)
+    #     else:
+    #         random_layer = None
+    #         if config['method'] == 'DANN':
+    #             ad_net = network.AdversarialNetwork(base_network.output_num(), 1024)
+    #         else:
+    #             ad_net = network.AdversarialNetwork(base_network.output_num() * class_num, 1024)
+    #     if config["loss"]["random"]:
+    #         random_layer.cuda()
+    #     ad_net = ad_net.cuda()
+    #     parameter_list = base_network.get_parameters() + ad_net.get_parameters()
+    #     classifier_param_list = base_network.get_parameters()
+    #
+    #     ad_net.train(True)
+    #     optimizer = lr_scheduler(optimizer, j, **schedule_param)
+    #
+    #     features = torch.cat((all_src_features, all_tgt_features), dim=0)
+    #     outputs = torch.cat((all_out_src, all_out_tgt), dim=0)
+    #     softmax_out = nn.Softmax(dim=1)(outputs)
+    #
+    #     if config['method'] == 'CDAN+E':
+    #         print('using method CDAN+E')
+    #         entropy = loss.Entropy(softmax_out)
+    #         transfer_loss = loss.CDAN([features, softmax_out], ad_net, entropy, network.calc_coeff(i), random_layer)
+    #     elif config['method'] == 'CDAN':
+    #         print('using method CDAN')
+    #         transfer_loss = loss.CDAN([features, softmax_out], ad_net, None, None, random_layer)
+    #     elif config['method'] == 'DANN':
+    #         print('using method DANN')
+    #         transfer_loss = loss.DANN(features, ad_net)
+    #     else:
+    #         raise ValueError('Method cannot be recognized.')
 
+    def ILA_adver_create_network(self):
+        # self.method
+        # import network
+        if self.method == 'DANN':
+            self.ad_net = network.AdversarialNetwork(2048, 1024)
+        elif self.method == 'CDAN':
+            self.ad_net = network.AdversarialNetwork(2048 * 31, 1024)
+        lr = 0.001
+        optimizer_config = {"type": optim.SGD, "optim_params": {'lr'          : lr, "momentum": 0.9, \
+                                                                   "weight_decay": 0.0005, "nesterov": True},
+                               "lr_type": "inv", \
+                               "lr_param": {"lr": lr, "gamma": 0.001, "power": 0.75}}
+
+        parameter_list = self.ad_net.get_parameters()
+        self.optimizer_adv = optimizer_config["type"](parameter_list, \
+                                             **(optimizer_config["optim_params"]))
+        param_lr = []
+        for param_group in self.optimizer_adv.param_groups:
+            param_lr.append(param_group["lr"])
+        self.schedule_param = optimizer_config["lr_param"]
+        self.lr_scheduler = lr_schedule.schedule_dict[optimizer_config["lr_type"]]
+        self.ad_net.train(True)
+
+        self.ad_net = to_cuda(self.ad_net)
+
+        self.ad_net.train(True)
+
+
+    def ILA_adver_update_network(self, filtered_classes):
+        # initial configuration
+        print("ILA update network at loop {}".format(self.loop))
+        stop = False
+        update_iters = 0
+
+        self.train_data[self.source_name]['iterator'] = \
+            iter(self.train_data[self.source_name]['loader'])
+
+        self.train_data[self.target_name]['iterator'] = \
+            iter(self.train_data[self.target_name]['loader'])
+
+        self.train_data['categorical']['iterator'] = \
+            iter(self.train_data['categorical']['loader'])
+        all_total = 0.0
+        all_correct = 0.0
+        filtered_total = 0.0
+        filtered_correct = 0.0
+
+        while not stop:
+            # update learning rate
+            self.update_lr()
+            self.optimizer_adv = self.lr_scheduler(self.optimizer_adv, self.loop, **self.schedule_param)
+            self.optimizer_adv.zero_grad()
+
+            # set the status of network
+            self.net.train()
+            self.net.zero_grad()
+
+            loss = 0
+            ce_loss_iter = 0
+            cdd_loss_iter = 0
+
+            # coventional sampling for training on labeled source data
+            source_sample = self.get_samples(self.source_name)
+            source_data, source_gt = source_sample['Img'], \
+                                     source_sample['Label']
+
+            source_data = to_cuda(source_data)
+            source_gt = to_cuda(source_gt)
+            self.net.module.set_bn_domain(self.bn_domain_map[self.source_name])
+            feats_source = self.net(source_data)
+
+            # compute the cross-entropy loss
+            ce_loss = total_loss = self.CELoss(feats_source['logits'], source_gt)
+            # ce_loss.backward()
+
+            ce_loss_iter += ce_loss
+            loss += ce_loss
+
+
+            target_sample = self.get_samples(self.target_name)
+            target_data, target_gt = target_sample['Img'], \
+                                     target_sample['Label']
+            target_data = to_cuda(target_data)
+            target_gt = to_cuda(target_gt)
+
+            # self.net.module.set_bn_domain(self.bn_domain_map[self.source_name])
+            # feats_source = self.net(source_data)
+            self.net.module.set_bn_domain(self.bn_domain_map[self.target_name])
+            #                 print('source in shape'.format(source_cls_concat.shape))
+            feats_target = self.net(target_data)
+
+            feats_toalign_S = self.prepare_feats(feats_source)
+            feats_toalign_T = self.prepare_feats(feats_target)
+
+            features = torch.cat((feats_toalign_S[0], feats_toalign_T[0]), dim=0)
+            outputs = torch.cat((feats_toalign_S[1], feats_toalign_T[1]), dim=0)
+            softmax_out = nn.Softmax(dim=1)(outputs)
+
+            if self.method == 'CDAN':
+                print('using method CDAN')
+                transfer_loss = loss.CDAN([features, softmax_out], self.ad_net, None, None, None)
+            elif self.method == 'DANN':
+                print('using method DANN')
+                transfer_loss = loss.DANN(features, self.ad_net)
+            else:
+                raise ValueError('Method cannot be recognized.')
+
+            total_loss += transfer_loss
+
+            if len(filtered_classes) > 0:
+                # update the network parameters
+                # 1) class-aware sampling
+                source_samples_cls, source_nums_cls, \
+                target_samples_cls, target_nums_cls, src_labels, tgt_labels_pred = self.ILA_CAS()
+
+                # 2) forward and compute the loss
+                source_cls_concat = torch.cat([to_cuda(samples)
+                                               for samples in source_samples_cls], dim=0)
+                target_cls_concat = torch.cat([to_cuda(samples)
+                                               for samples in target_samples_cls], dim=0)
+
+                #                 print('type source_samples_cls={}, type target_samples_cls={}'.format(type(source_samples_cls), \
+                #                                                                                       type(target_samples_cls)))
+                #                 print("source_cls_concat={}, target_cls_concat={}".format(source_cls_concat, target_cls_concat))
+                self.net.module.set_bn_domain(self.bn_domain_map[self.source_name])
+                feats_source = self.net(source_cls_concat)
+                self.net.module.set_bn_domain(self.bn_domain_map[self.target_name])
+                #                 print('source in shape'.format(source_cls_concat.shape))
+                feats_target = self.net(target_cls_concat)
+                #                 print('type feats_source = {}, type feats_target'.format(type(feats_source), type(feats_target)))
+                # prepare the features
+                #                 print('shape in target'.format(target_cls_concat.shape))
+                feats_toalign_S = self.prepare_feats(feats_source)
+                feats_toalign_T = self.prepare_feats(feats_target)
+
+                if self.loop >= self.opt.TRAIN.LOOPS_BEFORE_ILA:
+                    fs, ft = feats_toalign_S[0], feats_toalign_T[0]
+                    #                     for fs, ft in zip(feats_toalign_S, feats_toalign_T):
+                    #                         print("fs shape={}, ft shape={}".format(fs.shape, ft.shape))
+                    assert fs.shape[0] == ft.shape[0]
+                    #                         assert fs.shape[0] == 30, 'num of features source={}'.format(fs.shape[0])
+                    #                         assert src_labels.shape[0] == 30, 'num of labels source={}'.format(src_labels.shape[0])
+                    f_st = torch.cat((fs, ft), dim=0)
+                    print('f_st shape={}'.format(f_st.shape))
+                    sim_matrix = self.sim_module.get_sim_matrix(fs, ft)
+                    sim_matrix = sim_matrix.cuda()
+                    sim_loss = 2.0 * (self.sim_module.calc_loss_rect_matrix(sim_matrix, src_labels, tgt_labels_pred))
+                    # sim_loss = 2.0 * (self.sim_module(f_st, criterion_inputs={'src_labels': src_labels}))
+                    #                         sim_matrix = self.sim_module.get_sim_matrix(fs, ft)
+                    #                         sim_matrix = sim_matrix.cuda()
+                    #                         sim_loss = self.sim_module.calc_loss_rect_matrix(sim_matrix, src_labels, tgt_labels_pred)
+                    conf_ind = self.sim_module.conf_ind
+                    all_assigned = self.sim_module.all_assigned
+                    all_total += all_assigned.shape[0]
+                    all_correct += torch.sum((all_assigned == tgt_labels_pred).float()).item()
+                    fil_labels = tgt_labels_pred[conf_ind]
+                    fil_assigned = all_assigned[conf_ind]
+                    filtered_correct += torch.sum((fil_labels == fil_assigned).float()).item()
+                    filtered_total += conf_ind.shape[0]
+                    del all_assigned, fil_labels, fil_assigned
+                    #                     print('fil corr: {}, fil total: {}, all_correct:{}, all_total: {}'.format(filtered_correct, filtered_total, all_correct, all_total ) )
+                    #                     print('conf_ind = {}, all_assigned = {}'.format(conf_ind, all_assigned))
+
+                    assert (torch.isnan(sim_loss) == False)
+                    # sim_loss.backward(retain_graph=True)
+                    total_loss += sim_loss
+                    # sim_loss.backward()
+
+                # cdd_loss = self.cdd.forward(feats_toalign_S, feats_toalign_T,
+                #                             source_nums_cls, target_nums_cls)[self.discrepancy_key]
+                #
+                # cdd_loss *= self.opt.CDD.LOSS_WEIGHT
+                # cdd_loss.backward()
+                #
+                # cdd_loss_iter += cdd_loss
+                # loss += cdd_loss
+
+            # update the network
+            total_loss.backward()
+            self.optimizer.step()
+            self.optimizer_adv.step()
+            # del cdd_loss
+            if self.loop >= self.opt.TRAIN.LOOPS_BEFORE_ILA:
+                del sim_loss
+
+            if self.opt.TRAIN.LOGGING and (update_iters + 1) % \
+                    (max(1, self.iters_per_loop // self.opt.TRAIN.NUM_LOGGING_PER_LOOP)) == 0:
+                # accu = self.model_eval(source_preds, source_gt)
+                cur_loss = {'ce_loss'   : ce_loss_iter, 'cdd_loss': cdd_loss_iter,
+                            'total_loss': loss}
+                self.logging(cur_loss, 0)
+
+            self.opt.TRAIN.TEST_INTERVAL = min(1.0, self.opt.TRAIN.TEST_INTERVAL)
+            self.opt.TRAIN.SAVE_CKPT_INTERVAL = min(1.0, self.opt.TRAIN.SAVE_CKPT_INTERVAL)
+
+            if self.opt.TRAIN.TEST_INTERVAL > 0 and \
+                    (update_iters + 1) % int(self.opt.TRAIN.TEST_INTERVAL * self.iters_per_loop) == 0:
+                with torch.no_grad():
+                    self.net.module.set_bn_domain(self.bn_domain_map[self.target_name])
+                    accu = self.test()
+                    print('Test at (loop %d, iters: %d) with %s: %.4f.' % (self.loop,
+                                                                           self.iters, self.opt.EVAL_METRIC, accu))
+                    if self.loop >= self.opt.TRAIN.LOOPS_BEFORE_ILA:
+                        print("loop: {:05d}, all_precision: {:.5f}, filtered_precision: {:.5f},".format(self.loop,
+                                                                                                        100.0 * all_correct / all_total,
+                                                                                                        100.0 * filtered_correct / filtered_total))
+                        all_total = 0.0
+                        all_correct = 0.0
+                        filtered_total = 0.0
+                        filtered_correct = 0.0
+
+            #             if self.opt.TRAIN.SAVE_CKPT_INTERVAL > 0 and \
+            #                     (update_iters + 1) % int(self.opt.TRAIN.SAVE_CKPT_INTERVAL * self.iters_per_loop) == 0:
+            #                 self.save_ckpt()
+
+            update_iters += 1
+            self.iters += 1
+
+            # update stop condition
+            if update_iters >= self.iters_per_loop:
+                stop = True
+            else:
+                stop = False
